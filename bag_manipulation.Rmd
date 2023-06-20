@@ -1,0 +1,906 @@
+---
+title: "Bags_analysis"
+author: "EVS"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo = FALSE, include=FALSE}
+#IMPORTANT INFO:
+
+#eval: evaluate code chunk (chunk won't be run if eval = FALSE)
+#echo: include code along with output when kitting file (figures but not code will appear when echo = FALSE)
+#include: include output when knitting file 
+#cache: save results for future renders (if cache = TRUE and no edits are made to code chunk,
+        #it will give previously generated output rather than evaluating again -- 
+        #useful for simulations which take a long time to run --
+        #I've had some issues with cache not working when I clear the environment or install new packages
+        #so I'd recommend saving simulation outputs separately as a plan B if cache fails)
+
+
+#Sections are designated by headings "#_"
+#Some sections have subsections designated by sub headings "##_"
+#at the top of each section is an informational code chunk describing the purpose, inputs, and outputs of the section
+#most sections correspond to a specific statistical analysis or figure
+
+```
+
+```{r, echo = FALSE, include=FALSE, eval = FALSE}
+#clear environment -- only run to clear environment!
+rm(list = ls())
+```
+
+```{r, echo = FALSE, include=FALSE}
+#Packages
+install.packages("tidyr")
+install.packages("readxl")
+install.packages("plyr")
+install.packages("dplyr")
+install.packages("modeest")
+install.packages("ggplot2")
+install.packages("vegan")
+install.packages("ggpubr")
+install.packages("lme4")
+install.packages("effects")
+install.packages("tidyverse")
+install.packages("tibble")
+install.packages("lattice")
+install.packages("sjPlot")
+install.packages("sjmisc")
+install.packages("Matrix")
+install.packages("nlme")
+install.packages("multcomp")
+install.packages("emmeans")
+install.packages("meta")
+install.packages("betapart")
+install.packages("xtable")
+install.packages("ggpubr")
+
+library(tidyr)
+library(readxl)
+library(plyr)
+library(dplyr)
+library(modeest)
+library(ggplot2)
+library(vegan)
+library(ggpubr)
+library(lme4)
+library(effects)
+library(tidyverse)
+library(tibble)
+library(lattice)
+library(sjPlot)
+library(sjmisc)
+library(Matrix)
+library(nlme)
+library(multcomp)
+library(emmeans)
+library(meta)
+library(betapart)
+library(xtable)
+library(ggpubr)
+
+```
+
+# Imports
+```{r, echo = FALSE, include=FALSE}
+#read in DATA_Combined: master data sheet including Pre, Post1, Post2 by plant
+DATA_Combined <- read_excel("DATA_Combined.xlsx")
+
+#create data frame containing only Post1 data
+  #Post1 data contains data from both Post surveys in 2019
+Post1 <- subset(DATA_Combined, Survey == "Post1")
+
+```
+
+```{r, echo = FALSE, include=FALSE}
+#input: DATA_Combined
+
+#output: plants (a data frame showing total abundance of arthropod species found on each plant species 
+#across the entire experiment after treatment implementation)
+
+#used as a table in supplement
+
+plants <- DATA_Combined %>%
+  filter(Survey == "Post1") %>%
+  dplyr::select(-c(Survey, Bag, Block, Year, Treatment, CommonSp, PlantNumber)) %>%
+  pivot_longer(2:207, names_to = "Species", values_to = "abundance")%>% 
+  group_by(Plant, Species) %>%
+  summarise_all(sum) %>%
+  pivot_wider(names_from = "Plant", values_from = "abundance")
+
+```
+
+```{r, echo = FALSE, include=FALSE}
+#input: DATA_Combined
+
+#output: plants3 (a data frame showing the number of plants of each species in each bag
+#across the entire experiment before tretament implementation)
+
+#used as a table in supplement
+
+plants3 <- DATA_Combined %>%
+  filter(Survey == "Pre") %>%
+  dplyr::select(c(Bag, Plant,Treatment)) %>%
+  group_by_all() %>% 
+  summarise(Count = n())%>%
+  pivot_wider(names_from = "Plant", values_from = "Count") %>%
+  replace(is.na(.), 0)
+
+plants3[plants3 == 'C'] <- 'Control'
+plants3[plants3 == 'R'] <- 'Random Loss'
+plants3[plants3 == 'H'] <- 'Homogenization'
+
+```
+
+```{r, echo = FALSE, include=FALSE}
+#input: DATA_Combined
+
+#output: plants3 (a data frame showing the number of plants of each species in each bag
+#across the entire experiment
+
+#used as a table in supplement
+
+plants2 <- DATA_Combined %>%
+  filter(Survey == "Post1") %>%
+  dplyr::select(c(Bag, Plant,Treatment)) %>%
+  group_by_all() %>% 
+  summarise(Count = n())%>%
+  pivot_wider(names_from = "Plant", values_from = "Count") %>%
+  replace(is.na(.), 0)
+
+plants2[plants2 == 'C'] <- 'Control'
+plants2[plants2 == 'R'] <- 'Random Loss'
+plants2[plants2 == 'H'] <- 'Homogenization'
+
+```
+
+
+# Calculate Speices Richness
+```{r, echo = FALSE, include=FALSE}
+#condense master data sheet from plant level to bag level
+#calculate species richness by bag for Post1 data
+#use anova to analyze how species richness is affected by treatment and common species
+#plot species richness by common species
+
+#input: Post1, df containing Post1 data by plant
+      #to generate, run Imports section
+
+#output: Post1_bag, df containing number of arthropod individuals of each species and total species richness in each bag
+        #species richness is the last column
+        #plot of species richness by common species
+```
+
+
+```{r, echo = FALSE, include=FALSE}
+#DATA MANIPULATION
+
+#use group_by and summarize to condense data frame by bag
+#grouping by Bag, Block, Treatment, and Common Species allows us to keep those variables
+  #and just take the sum of arthropods in each bag for each arthropod species
+Post1_bag <- Post1[,c(2,3,5,8:214)] %>%
+  group_by(Bag, Block, Treatment, CommonSp) %>%
+  summarize_all(sum)
+
+#calculate species richness for each bag by counting number of arthropod species with >= 1 individual present
+#not totally sure how apply works but it does what I need it to
+Post1_bag$SpRichness <- apply(Post1_bag[,5:210], MARGIN = 1, function(x)sum(x>=1)) 
+
+```
+
+# Evenness and Effective Number of Species
+
+```{r, echo = FALSE, include=FALSE}
+#calculate and visualize diversity indexes: ENS shannon, ENS simpson, evenness, species richness
+
+#input: Post1_bag, df containing Post1 data by bag
+      #to generate, run Species Richness by Treatment section
+
+#output: Diversity_df, data frame containing ENS shannon, ENS simpson, Species richness, and evenness for each bag
+          #boxplot of ENS shannon by common species
+          #boxplot of ENs shannon by treatment
+          #line and dot plot of all diversity indeces by treatment
+          #line and dot plot of al diversity indeces by treatment
+```
+
+```{r, echo = FALSE, include=TRUE}
+#DATA ANALYSIS
+#ENS simpson
+
+#empty vector for simpson values
+simpsonvec <- c()
+#for numbers 1 through 45 (each row in Post1_bag)
+for(i in 1:45) {
+  #calculate the simpson index of the bag based on abundance data
+  simpson <- diversity(Post1_bag[i,5:210], "simpson")
+  simpson <- 1/(1-simpson)
+  #add the simpson value to vector
+  simpsonvec <- c(simpsonvec, simpson)
+}
+
+
+```
+
+
+```{r, echo = FALSE, include=TRUE}
+#DATA ANALYSIS
+#ENS shannon
+
+#empty vector for shannon values
+shannonvec <- c()
+#for numbers 1 through 45 (each row in Post1_bag)
+for(i in 1:45) {
+  #calculate the shannon index of the bag based on abundance data
+  shannon <- diversity(Post1_bag[i,5:210], "shannon")
+  shannon <- exp(shannon)
+  #add the shannon value to vector
+  shannonvec <- c(shannonvec, shannon)
+}
+
+```
+
+```{r, echo = FALSE, include=TRUE}
+#DATA ANALYSIS
+#evenness (based on shannon index)
+
+#empty vector for evenness values
+evn_vec <- c()
+#for numbers 1 through 45 (each row in Post1_bag)
+for(i in 1:45) {
+  #calculate the evenness of the bag based on abundance data
+  shannon_e <- diversity(Post1_bag[i,5:210], "shannon")
+  evn <- shannon_e/log(Post1_bag[i,211])
+  #add the evenness value to vector
+  evn_vec <- c(evn_vec, evn)
+}
+```
+
+```{r, echo = FALSE, include=FALSE}
+#create data frame by bag with Bag, Treatment, Common Species, Species Richness, ENS simpson, ENS Shannon, and evenness columns
+#use vectors of diversity indexes created in previous chunks
+Diversity_df <- Post1_bag[,c(1,2,3,4,211)]
+Diversity_df$Enssimpson <- simpsonvec
+Diversity_df$Ensshannon <- shannonvec
+Diversity_df$Evenness <- as.numeric(evn_vec)
+```
+
+# Plot Species Abundance Distributions
+```{r, echo = FALSE, include=TRUE}
+#create arthropod species abundance distributions for each common species region and treatment (averaged across bags)
+
+#input: Post1_bag
+#output: abundance distribution plots for each common species region and treatment (abundance for each arthropod species averaged at bag level
+
+
+```
+
+```{r, echo = FALSE, include=TRUE}
+#DATA ANALYSIS
+#create data frame with average abundances for each arthropod species in each treatment
+
+Treat_abundance <- Post1_bag[,c(3,5:210)] %>%
+  #take the mean of arthropod abundances by bag in each treatment
+  group_by(Treatment) %>%
+  summarise_all(mean) %>%
+  #pivot data frame so that arthropod species names are rows
+  pivot_longer(cols = 2:207, names_to = "Arthropods", values_to = "Abundance") %>%
+  #remove any abundances that are 0
+  subset(Abundance > 0) %>%
+  #arrange data frame in descending order of arthropod abundance
+  arrange(desc(Abundance)) %>%
+  #row_number indicates descending order of abundances within each treatment
+  #*note: no idea what x = 0 does here but code doesn't work without it 
+  group_by(Treatment) %>%
+  mutate(rows = row_number(),x = 0)
+
+
+```
+
+```{r, echo = FALSE, include=TRUE}
+#DATA ANALYSIS
+#create data frame with average abundances for each arthropod species in each common species region
+
+Comm_abundance <- Post1_bag[,c(4:210)] %>%
+  #take the mean of arthropod abundances by bag in each common species region
+  group_by(CommonSp) %>%
+  summarise_all(mean) %>%
+  #pivot data frame so that arthropod species names are rows
+  pivot_longer(cols = 2:207, names_to = "Arthropods", values_to = "Abundance") %>%
+  #remove any abundances that are 0
+  subset(Abundance > 0) %>%
+  #arrange data frame in descending order of arthropod abundance
+  arrange(desc(Abundance)) %>%
+  #row_number indicates descending order of abundances within each common species
+  #*note: no idea what x = 0 does here but code doesn't work without it 
+  group_by(CommonSp) %>%
+  mutate(rows = row_number(), x = 0)
+```
+
+```{r, echo = FALSE, include=TRUE}
+#DATA ANALYSIS
+#this was initially for drawing vertical lines at the abundance tails of the plots, but i realized it was easier to just do it in ppt so it's not being used in the plot
+
+H_treat <- subset(Treat_abundance, Treatment == "H")
+vlineH <- max(H_treat$rows)
+
+R_treat <- subset(Treat_abundance, Treatment == "R")
+vlineR <- max(R_treat$rows)
+
+C_treat <- subset(Treat_abundance, Treatment == "C")
+vlineC <- max(C_treat$rows)
+
+```
+
+```{r, echo = FALSE, include=FALSE}
+#DATA ANALYSIS
+#this was initially for drawing vertical lines at the abundance tails of the plots, but i realized it was easier to just do it in ppt so it's not being used in the plot
+
+H_comm <- subset(Comm_abundance, CommonSp == "C")
+vlineC_comm <- max(H_comm$rows)
+
+R_comm <- subset(Comm_abundance, CommonSp == "B")
+vlineB_comm <- max(R_comm$rows)
+
+C_comm <- subset(Comm_abundance, CommonSp == "A")
+vlineA_comm <- max(C_comm$rows)
+
+```
+
+```{r, echo = FALSE, include=TRUE}
+#PLOT
+#arthropod species abundance distribution for each treatment averaged at bag level
+
+#revalue treatment names to how they will show up on plot
+Treat_abundance$Treatment <- revalue(Treat_abundance$Treatment, c("C" = "Control", "R" = "Random Loss", "H" = "Homogenization"))
+#specify order treatment levels will appear on plot
+Treat_abundance$Treatment <- factor(Treat_abundance$Treatment, levels=c("Control", "Random Loss", "Homogenization"))
+
+Treat_abundance %>%
+  ggplot() +
+  #create bar plot of rows by arthropod abundance
+  geom_col(aes(x = rows, y = Abundance, group = rows),
+           fill = "black", color = "black", size = .2) +
+  #facet by treatment
+  facet_wrap(~Treatment, ncol = 1) +
+  #specify theme
+  theme_classic() +
+  #customize theme
+  theme(title = element_text(color = "black", size = 25, face = "bold"),
+        aspect.ratio = 0.35,
+        strip.text.x = element_text(color = "black", size = 18, face = "bold", hjust = 0.25),
+        axis.text = element_text(size = 14, face = "bold"),
+        axis.line = element_line(size = 1)) +
+  #change length of y axis
+  scale_y_continuous(limits=c(-100, 750)) +
+  #customize y axis label
+  labs(x = "Arthropod Species") 
+
+Treat_abundance %>%
+  ggplot(aes(x = rows, y = Abundance)) +
+  #create line plot of rows by arthropod abundance
+  geom_line(size= 1.5) +
+  #facet by treatment group
+  facet_wrap(~Treatment, ncol = 1) +
+  #specify theme
+  theme_classic() +
+  #customize theme
+  theme(title = element_text(color = "black", size = 25, face = "bold"),
+        aspect.ratio = 0.35,
+        strip.text.x = element_text(color = "black", size = 18, face = "bold", hjust = 0.25),
+        axis.text = element_text(size = 14, face = "bold"),
+        axis.line = element_line(size = 1)) +
+  #change length of y axis
+  scale_y_continuous(limits=c(-50, 500)) +
+  #customize y axis lable
+  labs(x = "Arthropod Species")
+```
+
+```{r, echo = FALSE, include=TRUE}
+#PLOT
+#arthropod species abundance distribution for each common species region averaged at bag level
+
+#revalue common species names to how they will show up on plot
+Comm_abundance$CommonSp <- revalue(Comm_abundance$CommonSp, c("A" = "A. tuberosa", "B" = "B. alba", "C" = "S. altissima"))
+#specify order common species levels will appear on plot
+Comm_abundance$CommonSp <- factor(Comm_abundance$CommonSp, levels=c("A. tuberosa", "S. altissima", "B. alba"))
+
+Comm_abundance %>%
+  ggplot() +
+  #create bar plot of rows by arthropod abundance
+  geom_col(aes(x = rows, y = Abundance, group = rows),
+           fill = "black", color = "black", size = .2) +
+  #facet by common species
+  facet_wrap(~CommonSp, ncol = 1) +
+  #specify theme
+  theme_classic() +
+  #customize theme
+  theme(title = element_text(color = "black", size = 25, face = "bold"),
+        aspect.ratio = 0.35,
+        strip.text.x = element_text(color = "black", size = 18, face = "bold.italic", hjust = 0.25),
+        axis.text = element_text(size = 14, face = "bold"),
+        axis.line = element_line(size = 1)) +
+  #change length of y axis
+  scale_y_continuous(limits=c(-50, 500)) +
+  #customize y axis lable
+  labs(x = "Arthropod Species")
+
+
+Comm_abundance %>%
+  ggplot(aes(x = rows, y = Abundance)) +
+  #create line plot of rows by arthropod abundance
+  geom_line(size= 1.5) +
+  #facet by common species
+  facet_wrap(~CommonSp, ncol = 1) +
+  #specify theme
+  theme_classic() +
+  #customize theme
+  theme(title = element_text(color = "black", size = 25, face = "bold"),
+        aspect.ratio = 0.35,
+        strip.text.x = element_text(color = "black", size = 18, face = "bold.italic", hjust = 0.25),
+        axis.text = element_text(size = 14, face = "bold"),
+        axis.line = element_line(size = 1)) +
+  #change length of y axis
+  scale_y_continuous(limits=c(-50, 500)) +
+  #customize y axis lable
+  labs(x = "Arthropod Species")
+
+```
+
+# Mixed Model Selection Species Richness
+```{r, echo = TRUE, include=TRUE}
+#find the model best explaining variation in species richness between bags
+
+#input: Diversity_df
+#output: best fit model, pairwise comparisons of fixed effect levels in that model, forest plot showing relative effects of fixed effect levels in best fit model
+```
+## Choosing Optimal variance Structure
+```{r, echo = TRUE, include=TRUE}
+#STATISTICS
+#determine whether any fixed effects in the species richness model require weighted variances (have non-normal distributions)
+
+#create weights for each fixed effect that could possibly explain species richness (including their interaction)
+r1 <- varIdent(form = ~1|Treatment)
+r2 <- varIdent(form = ~1|CommonSp)
+r3 <- varIdent(form = ~1|Treatment*CommonSp)
+
+#full model containing all fixed effects
+rich_gls <- gls(SpRichness ~ Treatment* CommonSp, method = "REML", data = Diversity_df)
+
+#full model plus each respective weighted variance
+rich1_gls <- gls(SpRichness ~ Treatment* CommonSp, method = "REML", data = Diversity_df, weights = r1)
+rich2_gls <- gls(SpRichness ~ Treatment* CommonSp, method = "REML", data = Diversity_df, weights = r2)
+rich3_gls <- gls(SpRichness ~ Treatment* CommonSp, method = "REML", data = Diversity_df, weights = r3)
+
+#compare AIC of full model to each weighted model (no weights required)
+anova(rich_gls, rich1_gls, rich2_gls, rich3_gls)
+
+#*note: this weighted variances protocol is based on methods described in Zuur 2009, which said to test weighted models against full model, then include any necessary weights during model selection later. Zuur emphasizes the importance of using REML when selecting weighted variances, not sure why, but it doesn't change the results.
+
+#plot residuals vs. fitted values and residuals vs. fixed effect levels
+plot(as.factor(Diversity_df$Treatment), resid(rich_gls))
+plot(as.factor(Diversity_df$CommonSp), resid(rich_gls))
+plot(rich_gls)
+
+
+```
+\newpage
+## model selection
+```{r, echo = TRUE, include=TRUE}
+#STATISTICS
+#select best fit model explaining variation in species richness
+
+#full model containing all fixed effects and their interactions plus random effect (block)
+rich1 = lme(SpRichness ~ Treatment + CommonSp + Treatment*CommonSp , method = "ML", random = ~1|Block, data = Diversity_df)
+#drop interaction term
+rich2 = lme(SpRichness ~ Treatment + CommonSp, method = "ML", random = ~1|Block, data = Diversity_df)
+#drop common species term
+rich3 = lme(SpRichness ~ Treatment, method = "ML", random = ~1|Block, data = Diversity_df)
+#drop richness term
+rich4 = lme(SpRichness ~ CommonSp, method = "ML", random = ~1|Block, data = Diversity_df)
+
+#select best fit model based on AIC values (best fit is rich 2)
+anova(rich1, rich2, rich3, rich4)
+anova(rich1, rich2)
+anova(rich2, rich3)
+
+#diagnostic plots: checking for normally distributed residuals
+qqnorm(resid(rich2))
+qqline(resid(rich2))
+
+plot(fitted(rich2),resid(rich2, type = "normalized"), abline(h= 0))
+
+#pairwise comparisons for common species levels
+emms_rich2 <- emmeans(rich2, ~CommonSp)
+summary(contrast(emms_rich2, interaction = "pairwise"))
+print(emms_rich2)
+
+#pairwise comparisons for common species levels
+emms_rich3 <- emmeans(rich2, ~Treatment)
+summary(contrast(emms_rich3, interaction = "pairwise"))
+print(emms_rich3)
+
+emms_rich2_re <- as.data.frame(emms_rich2)
+emms_rich2_re$CommonSp <- revalue(emms_rich2_re$CommonSp, c("C" = "S. altissima", "B" =  "B. alba", "A" = "A. tuberosa"))
+emms_rich2_re$CommonSp <- factor(emms_rich2_re$CommonSp, levels=c("S. altissima", "A. tuberosa", "B. alba"))
+
+#plot averages of all 3 diversity indices grouped for each Common Species
+ggplot(data = emms_rich2_re, aes(x= CommonSp, y=emmean, group = CommonSp)) +
+  #add error bars based on sd values in data frame
+  geom_errorbar(aes(ymin = emmean- SE, ymax = emmean+SE), width = 0.2)+
+  #add and customize lines and points (2 layers points with one slightly larger create outlines)
+  #geom_line(aes(color = CommonSp), lwd = 2)+
+  geom_point(size = 5) +
+  ylab("Species Richness") + 
+  #add theme
+  theme_classic() +
+  #customize theme
+  theme(title = element_text(color = "black", size = 22, face = "bold"),
+        axis.title.x=element_blank(),
+        aspect.ratio = 1,
+        axis.text.x = element_text(size = 22, face = "bold", color = "black", angle = 50, hjust = 1, vjust = 1),
+        axis.text.y = element_text(size = 22, face = "bold", color = "black"),
+        axis.line = element_line(size = 1))
+
+
+emms_rich_re <- as.data.frame(emms_rich)
+emms_rich_re$Treatment <- revalue(emms_rich_re$Treatment, c("H" = "Habitat Simplification", "R" =  "Habitat Loss", "C" = "Control"))
+emms_rich_re$Treatment <- factor(emms_rich_re$Treatment, levels=c("Control", "Habitat Loss", "Habitat Simplification"))
+
+emms_rich_re$CommonSp <- revalue(emms_rich_re$CommonSp, c("C" = "S. altissima", "B" =  "B. alba", "A" = "A. tuberosa"))
+emms_rich_re$CommonSp <- factor(emms_rich_re$CommonSp, levels=c("S. altissima", "A. tuberosa", "B. alba"))
+
+#plot averages of all 3 diversity indices grouped for each Common Species
+ggplot(data = emms_rich_re, aes(x= Treatment, y=emmean, group = Treatment)) +
+  #add error bars based on sd values in data frame
+  geom_errorbar(aes(ymin = emmean-SE, ymax = emmean+SE), width = 0.2)+
+  #add and customize lines and points (2 layers points with one slightly larger create outlines)
+  geom_point(size = 5) +
+  ylab("Species Richness") + 
+  #add theme
+  theme_classic() +
+  #customize theme
+  theme(title = element_text(color = "black", size = 22, face = "bold"),
+        axis.title.x=element_blank(),
+        aspect.ratio = 1,
+        axis.text.x = element_text(size = 22, face = "bold", color = "black", angle = 50, hjust = 1, vjust = 1),
+        axis.text.y = element_text(size = 22, face = "bold", color = "black"),
+        axis.line = element_line(size = 1))+
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10)) 
+
+
+#plot averages of all 3 diversity indices grouped for each Common Species
+ggplot(data = emms_rich_re, aes(x= CommonSp, y=emmean, group = Treatment), position = position_dodge(.5)) +
+  #add error bars based on sd values in data frame
+  geom_errorbar(aes(ymin = emmean-SE, ymax = emmean+SE), width = 0.2, position = position_dodge(.5))+
+  #add and customize lines and points (2 layers points with one slightly larger create outlines)
+  #geom_line(aes(color = CommonSp), lwd = 2)+
+  geom_point(size = 5, aes(shape = factor(Treatment)), position = position_dodge(.5)) +
+  geom_point(size = 3, aes(shape = factor(Treatment)), position = position_dodge(.5), color = "white") +
+  ylab("Species Richness") + 
+  #add theme
+  theme_classic() +
+  #customize theme
+  theme(title = element_text(color = "black", size = 22, face = "bold"),
+        axis.title.x=element_blank(),
+        aspect.ratio = 1,
+        axis.text.x = element_text(size = 22, face = "bold", color = "black", angle = 50, hjust = 1, vjust = 1),
+        axis.text.y = element_text(size = 22, face = "bold", color = "black"),
+        axis.line = element_line(size = 1),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 22, face = "bold", color = "black"))
+  
+
+
+```
+
+# Mixed Model Selection Ensshannon
+## Choosing optimal variance structure
+```{r, echo = TRUE, include=TRUE}
+#STATISTICS
+#determine whether any fixed effects in the ENS shannon model require weighted variances (have non-normal distributions)
+
+#full model containing all fixed effects
+shan_gls <- gls(Ensshannon ~ Treatment* CommonSp, method = "REML", data = Diversity_df)
+
+#full model plus each respective weighted variance
+shan1_gls <- gls(Ensshannon ~ Treatment* CommonSp, method = "REML", data = Diversity_df, weights = r1)
+shan2_gls <- gls(Ensshannon ~ Treatment* CommonSp, method = "REML", data = Diversity_df, weights = r2)
+shan3_gls <- gls(Ensshannon ~ Treatment* CommonSp, method = "REML", data = Diversity_df, weights = r3)
+
+#compare AIC of full model to each weighted model 
+#weights required for treatment and common species effects, so optimal variance structure includes r3
+anova(shan_gls, shan1_gls, shan2_gls, shan3_gls)
+
+#plot residuals vs. fitted values and residuals vs. fixed effect levels
+plot(as.factor(Diversity_df$Treatment), resid(shan3_gls, type = "normalized"))
+plot(as.factor(Diversity_df$CommonSp), resid(shan3_gls, type = "normalized"))
+plot(shan3_gls)
+```
+\newpage
+
+## Model selection
+```{r, echo = TRUE, include=TRUE}
+#STATISTICS
+#select best fit model explaining variation in ENS shannon
+
+#full model containing all fixed effects and their interactions plus random effect (block)
+shan1 = lme(Ensshannon ~ Treatment + CommonSp + Treatment*CommonSp , weights = r3, method = "ML", random = ~1|Block, data = Diversity_df)
+#drop interaction term
+shan2 = lme(Ensshannon ~ Treatment + CommonSp, weights = r3, method = "ML", random = ~1|Block, data = Diversity_df)
+#drop Common Species term
+shan3 = lme(Ensshannon ~ Treatment, weights = r3, method = "ML", random = ~1|Block, data = Diversity_df)
+#drop treatment term
+shan4 = lme(Ensshannon ~ CommonSp,  weights = r3, method = "ML", random = ~1|Block, data = Diversity_df)
+
+#select best fit model based on AIC values 
+#AIC shan1 = AIC shan4, so choose shan4 because it has the fewest terms
+anova(shan1, shan2, shan3, shan4)
+anova(shan1, shan4)
+
+#diagnostic plots: checking for normally distributed residuals
+qqnorm(resid(shan1))
+qqline(resid(shan1))
+
+plot(fitted(shan1),resid(shan1, type = "normalized"), abline(h= 0))
+  
+#pairwise comparisons for common species levels (do not include pairwise comparisons for treatment levels because treatment term was not in best fit model)
+emms_shan1 <- emmeans(shan1, ~Treatment*CommonSp)
+summary(contrast(emms_shan1, interaction = "pairwise"))
+print(emms_shan1)
+
+ emms_shan2 <- emmeans(shan1, ~Treatment)
+summary(contrast(emms_shan2, interaction = "pairwise"))
+print(emms_shan2)
+
+emms_shan3 <- emmeans(shan1, ~CommonSp)
+summary(contrast(emms_shan3, interaction = "pairwise"))
+print(emms_shan3)
+
+
+emms_shan1_re <- as.data.frame(emms_shan1)
+emms_shan1_re$CommonSp <- revalue(emms_shan1_re$CommonSp, c("C" = "S. altissima", "B" =  "B. alba", "A" = "A. tuberosa"))
+emms_shan1_re$CommonSp <- factor(emms_shan1_re$CommonSp, levels=c("S. altissima", "A. tuberosa", "B. alba"))
+
+emms_shan1_re$Treatment <- factor(emms_shan1_re$Treatment, levels=c("C", "R", "H"))
+emms_shan1_re$Treatment <- revalue(emms_shan1_re$Treatment, c("C" = "Control", "H" =  "Simplification", "R" = "Habitat Loss"))
+
+
+#plot averages of all 3 diversity indices grouped for each Common Species
+ggplot(data = emms_shan1_re, aes(x= CommonSp, y=emmean, group = Treatment), position = position_dodge(.5)) +
+  #add error bars based on sd values in data frame
+  geom_errorbar(aes(ymin = emmean-SE, ymax = emmean+SE), width = 0.2, position = position_dodge(.5))+
+  #add and customize lines and points (2 layers points with one slightly larger create outlines)
+  #geom_line(aes(color = CommonSp), lwd = 2)+
+  geom_point(size = 5, aes(shape = factor(Treatment)), position = position_dodge(.5)) +
+  geom_point(size = 3, aes(shape = factor(Treatment)), position = position_dodge(.5), color = "white") +
+  ylab("ENS") + 
+  #add theme
+  theme_classic() +
+  #customize theme
+  theme(title = element_text(color = "black", size = 22, face = "bold"),
+        axis.title.x=element_blank(),
+        aspect.ratio = 1,
+        axis.text.x = element_text(size = 22, face = "bold", color = "black", angle = 50, hjust = 1, vjust = 1),
+        axis.text.y = element_text(size = 22, face = "bold", color = "black"),
+        axis.line = element_line(size = 1),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 22, face = "bold", color = "black"))
+
+emms_shan2 <- emmeans(shan1, ~Treatment)
+summary(contrast(emms_shan2, interaction = "pairwise"))
+print(emms_shan2)
+
+
+emms_shan2_re <- as.data.frame(emms_shan2)
+
+emms_shan2_re$Treatment <- factor(emms_shan2_re$Treatment, levels=c("C", "R", "H"))
+emms_shan2_re$Treatment <- revalue(emms_shan2_re$Treatment, c("C" = "Control", "H" =  "Simplification", "R" = "Habitat Loss"))
+
+
+#plot averages of all 3 diversity indices grouped for each Common Species
+ggplot(data = emms_shan2_re, aes(x= Treatment, y=emmean)) +
+  #add error bars based on sd values in data frame
+  geom_errorbar(aes(ymin = emmean-SE, ymax = emmean+SE), width = 0.2)+
+  #add and customize lines and points (2 layers points with one slightly larger create outlines)
+  #geom_line(aes(color = CommonSp), lwd = 2)+
+  geom_point(size = 5) +
+  ylab("ENS") + 
+  #add theme
+  theme_classic() +
+  #customize theme
+  theme(title = element_text(color = "black", size = 22, face = "bold"),
+        axis.title.x=element_blank(),
+        aspect.ratio = 1,
+        axis.text.x = element_text(size = 22, face = "bold", color = "black", angle = 50, hjust = 1, vjust = 1),
+        axis.text.y = element_text(size = 22, face = "bold", color = "black"),
+        axis.line = element_line(size = 1))
+
+emms_shan3 <- emmeans(shan1, ~CommonSp)
+summary(contrast(emms_shan3, interaction = "pairwise"))
+print(emms_shan3)
+
+
+emms_shan3_re <- as.data.frame(emms_shan3)
+
+emms_shan3_re$CommonSp <- revalue(emms_shan3_re$CommonSp, c("C" = "S. altissima", "B" =  "B. alba", "A" = "A. tuberosa"))
+emms_shan3_re$CommonSp <- factor(emms_shan3_re$CommonSp, levels=c("S. altissima", "A. tuberosa", "B. alba"))
+
+
+
+#plot averages of all 3 diversity indices grouped for each Common Species
+ggplot(data = emms_shan3_re, aes(x= CommonSp, y=emmean)) +
+  #add error bars based on sd values in data frame
+  geom_errorbar(aes(ymin = emmean-SE, ymax = emmean+SE), width = 0.2)+
+  #add and customize lines and points (2 layers points with one slightly larger create outlines)
+  #geom_line(aes(color = CommonSp), lwd = 2)+
+  geom_point(size = 5) +
+  ylab("ENS") + 
+  #add theme
+  theme_classic() +
+  #customize theme
+  theme(title = element_text(color = "black", size = 22, face = "bold"),
+        axis.title.x=element_blank(),
+        aspect.ratio = 1,
+        axis.text.x = element_text(size = 22, face = "bold", color = "black", angle = 50, hjust = 1, vjust = 1),
+        axis.text.y = element_text(size = 22, face = "bold", color = "black"),
+        axis.line = element_line(size = 1))
+
+
+```
+\newpage
+
+# Mixed Model Selection Evenness
+## Choosing optimal variance structure
+```{r, echo = TRUE, include=TRUE}
+#full model containing all fixed effects
+evn_gls <- gls(Evenness ~ Treatment* CommonSp, method = "REML", data = Diversity_df)
+
+#full model plus each respective weighted variance
+evn1_gls <- gls(Evenness ~ Treatment* CommonSp, method = "REML", data = Diversity_df, weights = r1)
+evn2_gls <- gls(Evenness ~ Treatment* CommonSp, method = "REML", data = Diversity_df, weights = r2)
+evn3_gls <- gls(Evenness ~ Treatment* CommonSp, method = "REML", data = Diversity_df, weights = r3)
+
+#compare AIC of full model to each weighted model 
+#weights required for treatment and common species effects, so optimal variance structure includes r3
+anova(evn_gls, evn1_gls, evn2_gls, evn3_gls)
+
+#plot residuals vs. fitted values and residuals vs. fixed effect levels
+plot(as.factor(Diversity_df$Treatment), resid(evn_gls, type = "normalized"))
+plot(as.factor(Diversity_df$CommonSp), resid(evn_gls, type = "normalized"))
+plot(evn_gls)
+```
+\newpage
+
+## Model selection
+```{r, echo = TRUE, include=TRUE}
+#STATISTICS
+#select best fit model explaining variation in ENS shannon
+
+#full model containing all fixed effects and their interactions plus random effect (block)
+evn1 = lme(Evenness ~ Treatment + CommonSp + Treatment*CommonSp, method = "ML", random = ~1|Block, data = Diversity_df)
+#drop interaction term
+evn2 = lme(Evenness ~ Treatment + CommonSp, method = "ML", random = ~1|Block, data = Diversity_df)
+#drop Common Species term
+evn3 = lme(Evenness ~ Treatment, method = "ML", random = ~1|Block, data = Diversity_df)
+#drop treatment term
+evn4 = lme(Evenness ~ CommonSp, method = "ML", random = ~1|Block, data = Diversity_df)
+
+#select best fit model based on AIC values 
+#AIC evn1 > AIC evn4
+anova(evn1, evn2, evn3, evn4)
+anova(evn1, evn4)
+
+
+#diagnostic plots: checking for normally distributed residuals
+qqnorm(resid(evn1))
+qqline(resid(evn1))
+
+plot(fitted(evn1),resid(evn1, type = "normalized"), abline(h= 0))
+
+#pairwise comparisons for common species levels (do not include pairwise comparisons for treatment levels because treatment term was not in best fit model)
+emms_evn1 <- emmeans(evn1, ~Treatment*CommonSp)
+summary(contrast(emms_evn1, interaction = "pairwise"))
+print(emms_evn1)
+
+emms_evn2 <- emmeans(evn1, ~CommonSp)
+summary(contrast(emms_evn2, interaction = "pairwise"))
+print(emms_evn2)
+
+emms_evn3 <- emmeans(evn1, ~Treatment)
+summary(contrast(emms_evn3, interaction = "pairwise"))
+print(emms_evn3)
+
+emms_evn1_re <- as.data.frame(emms_evn1)
+emms_evn1_re$CommonSp <- revalue(emms_evn1_re$CommonSp, c("C" = "S. altissima", "B" =  "B. alba", "A" = "A. tuberosa"))
+emms_evn1_re$CommonSp <- factor(emms_evn1_re$CommonSp, levels=c("S. altissima", "A. tuberosa", "B. alba"))
+
+emms_evn1_re$Treatment <- factor(emms_evn1_re$Treatment, levels=c("C", "R", "H"))
+emms_evn1_re$Treatment <- revalue(emms_evn1_re$Treatment, c("C" = "Control", "H" =  "Simplification", "R" = "Habitat Loss"))
+
+
+#plot averages of all 3 diversity indices grouped for each Common Species
+ggplot(data = emms_evn1_re, aes(x= CommonSp, y=emmean, group = Treatment), position = position_dodge(.5)) +
+  #add error bars based on sd values in data frame
+  geom_errorbar(aes(ymin = emmean-SE, ymax = emmean+SE), width = 0.2, position = position_dodge(.5))+
+  #add and customize lines and points (2 layers points with one slightly larger create outlines)
+  #geom_line(aes(color = CommonSp), lwd = 2)+
+  geom_point(size = 5, aes(shape = factor(Treatment)), position = position_dodge(.5)) +
+  geom_point(size = 3, aes(shape = factor(Treatment)), position = position_dodge(.5), color = "white") +
+  ylab("Evenness") + 
+  #add theme
+  theme_classic() +
+  #customize theme
+  theme(title = element_text(color = "black", size = 22, face = "bold"),
+        axis.title.x=element_blank(),
+        aspect.ratio = 1,
+        axis.text.x = element_text(size = 22, face = "bold", color = "black", angle = 50, hjust = 1, vjust = 1),
+        axis.text.y = element_text(size = 22, face = "bold", color = "black"),
+        axis.line = element_line(size = 1),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 22, face = "bold", color = "black"))
+
+emms_evn2 <- emmeans(evn1, ~Treatment)
+summary(contrast(emms_evn2, interaction = "pairwise"))
+print(emms_evn2)
+
+
+emms_evn2_re <- as.data.frame(emms_evn2)
+
+emms_evn2_re$Treatment <- factor(emms_evn2_re$Treatment, levels=c("C", "R", "H"))
+emms_evn2_re$Treatment <- revalue(emms_evn2_re$Treatment, c("C" = "Control", "H" =  "Simplification", "R" = "Habitat Loss"))
+
+
+#plot averages of all 3 diversity indices grouped for each Common Species
+ggplot(data = emms_evn2_re, aes(x= Treatment, y=emmean)) +
+  #add error bars based on sd values in data frame
+  geom_errorbar(aes(ymin = emmean-SE, ymax = emmean+SE), width = 0.2)+
+  #add and customize lines and points (2 layers points with one slightly larger create outlines)
+  #geom_line(aes(color = CommonSp), lwd = 2)+
+  geom_point(size = 5) +
+  ylab("Evennness") + 
+  #add theme
+  theme_classic() +
+  #customize theme
+  theme(title = element_text(color = "black", size = 22, face = "bold"),
+        axis.title.x=element_blank(),
+        aspect.ratio = 1,
+        axis.text.x = element_text(size = 22, face = "bold", color = "black", angle = 50, hjust = 1, vjust = 1),
+        axis.text.y = element_text(size = 22, face = "bold", color = "black"),
+        axis.line = element_line(size = 1))
+
+emms_evn3 <- emmeans(evn1, ~CommonSp)
+summary(contrast(emms_evn3, interaction = "pairwise"))
+print(emms_evn3)
+
+
+emms_evn3_re <- as.data.frame(emms_evn3)
+
+emms_evn3_re$CommonSp <- revalue(emms_evn3_re$CommonSp, c("C" = "S. altissima", "B" =  "B. alba", "A" = "A. tuberosa"))
+emms_evn3_re$CommonSp <- factor(emms_evn3_re$CommonSp, levels=c("S. altissima", "A. tuberosa", "B. alba"))
+
+
+
+#plot averages of all 3 diversity indices grouped for each Common Species
+ggplot(data = emms_evn3_re, aes(x= CommonSp, y=emmean)) +
+  #add error bars based on sd values in data frame
+  geom_errorbar(aes(ymin = emmean-SE, ymax = emmean+SE), width = 0.2)+
+  #add and customize lines and points (2 layers points with one slightly larger create outlines)
+  #geom_line(aes(color = CommonSp), lwd = 2)+
+  geom_point(size = 5) +
+  ylab("Evenness") + 
+  #add theme
+  theme_classic() +
+  #customize theme
+  theme(title = element_text(color = "black", size = 22, face = "bold"),
+        axis.title.x=element_blank(),
+        aspect.ratio = 1,
+        axis.text.x = element_text(size = 22, face = "bold", color = "black", angle = 50, hjust = 1, vjust = 1),
+        axis.text.y = element_text(size = 22, face = "bold", color = "black"),
+        axis.line = element_line(size = 1))
+
+
+```
